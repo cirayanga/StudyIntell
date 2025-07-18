@@ -1,0 +1,378 @@
+{% extends "base.html" %}
+
+{% block title %}{{ study_session.session_name }} - AI Study Buddy{% endblock %}
+
+{% block head %}
+<style>
+    .chat-container {
+        height: 70vh;
+        overflow-y: auto;
+        border: 1px solid var(--bs-border-color);
+        border-radius: 0.375rem;
+        background: var(--bs-body-bg);
+    }
+    
+    .message {
+        margin-bottom: 1rem;
+        animation: fadeIn 0.3s ease-in;
+    }
+    
+    .message.user {
+        text-align: right;
+    }
+    
+    .message.ai {
+        text-align: left;
+    }
+    
+    .message-bubble {
+        display: inline-block;
+        max-width: 70%;
+        padding: 0.75rem 1rem;
+        border-radius: 1rem;
+        word-wrap: break-word;
+    }
+    
+    .message.user .message-bubble {
+        background: linear-gradient(135deg, var(--bs-primary), var(--bs-secondary));
+        color: white;
+    }
+    
+    .message.ai .message-bubble {
+        background: var(--bs-light);
+        color: var(--bs-dark);
+        border: 1px solid var(--bs-border-color);
+    }
+    
+    .message-meta {
+        font-size: 0.75rem;
+        color: var(--bs-secondary);
+        margin-top: 0.25rem;
+    }
+    
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .voice-controls {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 1rem;
+        padding: 1.5rem;
+        color: white;
+        margin-bottom: 1rem;
+    }
+    
+    .recording-indicator {
+        display: none;
+        animation: pulse 1.5s infinite;
+    }
+    
+    @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.5; }
+        100% { opacity: 1; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <!-- Main Chat Area -->
+        <div class="col-lg-8">
+            <!-- Session Header -->
+            <div class="d-flex justify-content-between align-items-center py-3 border-bottom">
+                <div>
+                    <h2 class="mb-0">
+                        <i class="fas fa-book me-2"></i>{{ study_session.session_name }}
+                    </h2>
+                    <small class="text-muted">
+                        {{ study_session.total_interactions }} interactions • 
+                        Created {{ study_session.created_at.strftime('%B %d, %Y') }}
+                    </small>
+                </div>
+                <div class="dropdown">
+                    <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                        <i class="fas fa-ellipsis-v"></i>
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li><a class="dropdown-item" href="#" onclick="getSummary()">
+                            <i class="fas fa-file-alt me-2"></i>Get Summary
+                        </a></li>
+                        <li><a class="dropdown-item" href="#" onclick="exportSession()">
+                            <i class="fas fa-download me-2"></i>Export Session
+                        </a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item text-danger" href="{{ url_for('main.index') }}">
+                            <i class="fas fa-arrow-left me-2"></i>Back to Home
+                        </a></li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Voice Controls -->
+            <div class="voice-controls">
+                <div class="row align-items-center">
+                    <div class="col-md-6">
+                        <h5 class="mb-2">
+                            <i class="fas fa-microphone me-2"></i>Voice Controls
+                        </h5>
+                        <p class="mb-0">Click to start recording, speak your question, then click stop.</p>
+                    </div>
+                    <div class="col-md-6 text-md-end">
+                        <button id="voiceBtn" class="btn btn-light btn-lg me-2">
+                            <i class="fas fa-microphone me-2"></i>Start Recording
+                        </button>
+                        <button id="playLastResponseBtn" class="btn btn-outline-light" disabled>
+                            <i class="fas fa-volume-up me-2"></i>Play Last Response
+                        </button>
+                    </div>
+                </div>
+                <div id="recordingIndicator" class="recording-indicator mt-2">
+                    <i class="fas fa-circle text-danger me-2"></i>Recording in progress...
+                </div>
+            </div>
+            
+            <!-- Chat Container -->
+            <div id="chatContainer" class="chat-container p-3">
+                {% for conversation in conversations %}
+                    <div class="message user">
+                        <div class="message-bubble">
+                            {{ conversation.user_input }}
+                        </div>
+                        <div class="message-meta">
+                            <i class="fas fa-{{ 'microphone' if conversation.input_method == 'voice' else 'keyboard' }} me-1"></i>
+                            {{ conversation.timestamp.strftime('%I:%M %p') }}
+                        </div>
+                    </div>
+                    <div class="message ai">
+                        <div class="message-bubble">
+                            {{ conversation.ai_response }}
+                        </div>
+                        <div class="message-meta">
+                            <i class="fas fa-robot me-1"></i>AI Response
+                            <button class="btn btn-sm btn-link p-0 ms-2" onclick="speakText('{{ conversation.ai_response|replace("'", "\\'") }}')">
+                                <i class="fas fa-volume-up"></i>
+                            </button>
+                        </div>
+                    </div>
+                {% endfor %}
+                
+                {% if not conversations %}
+                    <div class="text-center py-5 text-muted">
+                        <i class="fas fa-comments display-1 mb-3"></i>
+                        <h4>Start Your Study Session</h4>
+                        <p>Ask a question using voice or text to begin your AI-powered learning experience.</p>
+                    </div>
+                {% endif %}
+            </div>
+            
+            <!-- Text Input -->
+            <div class="border-top p-3">
+                <form id="chatForm" class="row g-2">
+                    <div class="col">
+                        <input type="text" id="messageInput" class="form-control form-control-lg" 
+                               placeholder="Type your question here or use voice input above..." maxlength="500">
+                    </div>
+                    <div class="col-auto">
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            <i class="fas fa-paper-plane me-2"></i>Send
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <!-- Sidebar -->
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-lightbulb me-2"></i>Study Recommendations
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div id="recommendations">
+                        <p class="text-muted">Ask a question to get personalized study recommendations.</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-search me-2"></i>Knowledge Search
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="input-group mb-3">
+                        <input type="text" id="searchInput" class="form-control" placeholder="Search knowledge base...">
+                        <button class="btn btn-outline-secondary" onclick="searchKnowledge()">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </div>
+                    <div id="searchResults"></div>
+                </div>
+            </div>
+            
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-chart-bar me-2"></i>Session Stats
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center">
+                        <div class="col-6">
+                            <div class="border-end">
+                                <h4 class="text-primary">{{ study_session.total_interactions }}</h4>
+                                <small class="text-muted">Interactions</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <h4 class="text-secondary">{{ conversations|length }}</h4>
+                            <small class="text-muted">Messages</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Loading Modal -->
+<div class="modal fade" id="loadingModal" tabindex="-1" data-bs-backdrop="static">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-body text-center p-4">
+                <div class="spinner-border text-primary mb-3" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mb-0">Processing your request...</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/audio_recorder.js') }}"></script>
+<script src="{{ url_for('static', filename='js/study_buddy.js') }}"></script>
+<script>
+// Initialize study session
+const SESSION_ID = {{ study_session.id }};
+let lastAiResponse = '';
+
+// Initialize the study buddy
+document.addEventListener('DOMContentLoaded', function() {
+    initializeStudyBuddy(SESSION_ID);
+    
+    // Scroll to bottom of chat
+    const chatContainer = document.getElementById('chatContainer');
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+    
+    // Focus on message input
+    document.getElementById('messageInput').focus();
+});
+
+// Set last AI response for audio playback
+{% if conversations %}
+    lastAiResponse = `{{ conversations[-1].ai_response|replace('"', '\\"')|replace('\n', '\\n') }}`;
+    document.getElementById('playLastResponseBtn').disabled = false;
+{% endif %}
+
+function speakText(text) {
+    if ('speechSynthesis' in window) {
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = {{ user_preferences.speech_rate if user_preferences else 1.0 }};
+        utterance.voice = speechSynthesis.getVoices().find(voice => 
+            voice.name === '{{ user_preferences.preferred_voice if user_preferences else "en-US-Standard-A" }}'
+        ) || speechSynthesis.getVoices()[0];
+        speechSynthesis.speak(utterance);
+    }
+}
+
+function getSummary() {
+    const loadingModal = new bootstrap.Modal(document.getElementById('loadingModal'));
+    loadingModal.show();
+    
+    fetch(`/api/session/${SESSION_ID}/summary`)
+        .then(response => response.json())
+        .then(data => {
+            loadingModal.hide();
+            if (data.success) {
+                alert(`Session Summary:\n\n${data.summary}`);
+            } else {
+                alert('Error generating summary: ' + data.error);
+            }
+        })
+        .catch(error => {
+            loadingModal.hide();
+            alert('Error: ' + error.message);
+        });
+}
+
+function exportSession() {
+    // Create a simple text export of the session
+    const messages = document.querySelectorAll('.message');
+    let exportText = `Study Session: {{ study_session.session_name }}\n`;
+    exportText += `Date: {{ study_session.created_at.strftime('%B %d, %Y') }}\n\n`;
+    
+    messages.forEach((message, index) => {
+        const text = message.querySelector('.message-bubble').textContent;
+        const isUser = message.classList.contains('user');
+        exportText += `${isUser ? 'Student' : 'AI'}: ${text}\n\n`;
+    });
+    
+    // Download as text file
+    const blob = new Blob([exportText], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `study_session_${SESSION_ID}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function searchKnowledge() {
+    const query = document.getElementById('searchInput').value.trim();
+    if (!query) return;
+    
+    const resultsDiv = document.getElementById('searchResults');
+    resultsDiv.innerHTML = '<div class="spinner-border spinner-border-sm" role="status"></div>';
+    
+    fetch('/api/knowledge/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: query, limit: 3 })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success && data.results.length > 0) {
+            resultsDiv.innerHTML = data.results.map(result => `
+                <div class="border rounded p-2 mb-2">
+                    <h6 class="mb-1">${result.title}</h6>
+                    <p class="mb-1 small">${result.content.substring(0, 100)}...</p>
+                    <small class="text-muted">${result.category}</small>
+                </div>
+            `).join('');
+        } else {
+            resultsDiv.innerHTML = '<p class="text-muted small">No results found.</p>';
+        }
+    })
+    .catch(error => {
+        resultsDiv.innerHTML = '<p class="text-danger small">Search error.</p>';
+    });
+}
+
+// Enter key search
+document.getElementById('searchInput').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+        searchKnowledge();
+    }
+});
+</script>
+{% endblock %}
